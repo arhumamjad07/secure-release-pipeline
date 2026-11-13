@@ -1,0 +1,5 @@
+# Chart 0.10.8 installs Policy Controller v0.13.1 (digest pinned by chart).
+webhook:
+  failurePolicy: Fail
+  configData:
+    no-match-policy: deny

@@ -1,0 +1,122 @@
+name: Kubernetes admission
+on:
+  push:
+    branches: [feat/local-kubernetes-admission]
+permissions: {}
+concurrency:
+  group: admission-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  fixtures:
+    # Only this project can publish fixtures; never run fork code with credentials.
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    outputs:
+      unsigned: ${{ steps.unsigned.outputs.digest }}
+      unapproved: ${{ steps.unapproved.outputs.digest }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish unsigned fixture (no automatic Buildx provenance)
+        id: unsigned
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
+        with:
+          context: .
+          push: true
+          provenance: false
+          sbom: false
+          tags: ghcr.io/arhumamjad07/secure-release-pipeline:unsigned-${{ github.run_id }}
+          labels: fixture=unsigned-${{ github.run_id }}
+          build-args: APP_VERSION=unsigned-fixture
+      - name: Publish distinct wrong-workflow fixture
+        id: unapproved
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
+        with:
+          context: .
+          push: true
+          provenance: false
+          sbom: false
+          tags: ghcr.io/arhumamjad07/secure-release-pipeline:unapproved-${{ github.run_id }}
+          labels: fixture=unapproved-${{ github.run_id }}
+          build-args: APP_VERSION=unapproved-fixture
+      - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be
+        with:
+          subject-name: ghcr.io/arhumamjad07/secure-release-pipeline
+          subject-digest: ${{ steps.unapproved.outputs.digest }}
+          push-to-registry: true
+      - name: Prove negative fixture has valid provenance from this other workflow
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DIGEST: ${{ steps.unapproved.outputs.digest }}
+        run: |
+          gh attestation verify "oci://ghcr.io/arhumamjad07/secure-release-pipeline@$DIGEST" \
+            --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/admission.yml" \
+            --source-ref refs/heads/feat/local-kubernetes-admission \
+            --source-digest "$GITHUB_SHA" --deny-self-hosted-runners
+  cluster:
+    needs: fixtures
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Install kind
+        run: |
+          curl -fsSLo /tmp/kind https://github.com/kubernetes-sigs/kind/releases/download/v0.31.0/kind-linux-amd64
+          chmod +x /tmp/kind
+          sudo mv /tmp/kind /usr/local/bin/kind
+      - name: Validate chart and shell
+        run: |
+          helm lint charts/secure-api
+          helm template secure-api charts/secure-api >/tmp/rendered.yaml
+          bash -n scripts/setup-kind.sh scripts/test-admission.sh
+      - name: Create cluster and install enforcing policy
+        run: |
+          set -o pipefail
+          if ! scripts/setup-kind.sh 2>&1 | tee /tmp/setup.log; then
+            tail -c 5000 /tmp/setup.log | while IFS= read -r line; do echo "::error::$line"; done
+            exit 1
+          fi
+      - name: Admission and running workload tests
+        env:
+          UNSIGNED_IMAGE: ghcr.io/arhumamjad07/secure-release-pipeline@${{ needs.fixtures.outputs.unsigned }}
+          UNAPPROVED_IMAGE: ghcr.io/arhumamjad07/secure-release-pipeline@${{ needs.fixtures.outputs.unapproved }}
+        run: |
+          set -o pipefail
+          if ! scripts/test-admission.sh 2>&1 | tee /tmp/admission.log; then
+            tail -c 6000 /tmp/admission.log | while IFS= read -r line; do echo "::error::$line"; done
+            exit 1
+          fi
+          for result in evidence/approved.txt evidence/unsigned.txt evidence/unapproved-workflow.txt evidence/outside-policy.txt evidence/health.json evidence/version.json; do
+            while IFS= read -r line || [ -n "$line" ]; do echo "::notice file=$result::$line"; done < "$result"
+          done
+      - name: Diagnostics
+        if: always()
+        run: |
+          mkdir -p evidence
+          kubectl get clusterimagepolicy -o yaml > evidence/policy-state.yaml || true
+          kubectl -n cosign-system logs -l app.kubernetes.io/name=policy-controller --all-containers --tail=200 > evidence/controller.log || true
+          kubectl -n secure-app get events > evidence/events.txt || true
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: admission-evidence
+          path: evidence/

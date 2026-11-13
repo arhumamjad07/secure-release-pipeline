@@ -1,0 +1,13 @@
+{
+  "run": "https://github.com/arhumamjad07/secure-release-pipeline/actions/runs/43429892322",
+  "result": "success",
+  "approved": "admitted, ready, expected health/version",
+  "unsigned": "denied by policy",
+  "wrong_workflow": "valid provenance independently verified, denied by policy",
+  "outside_policy": "denied",
+  "fixture_digests": {
+    "unsigned": "sha256:ea1404b0e347b28fbda9266f367eb320046ad4e204c82fca88a730bcf63f6a7a",
+    "unapproved": "sha256:f7638dbd9df163ad92f1d4fd3069e8cefe0e32020f89a4d2b39341eef091d31d"
+  },
+  "raw_evidence": "admission-evidence artifact on the linked run"
+}

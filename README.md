@@ -201,3 +201,20 @@ the ordinary PR workflow tests the merge revision.
 Local kind is blocked by rootless Docker's missing systemd `Delegate=yes`.
 GitHub Actions is used for the real cluster acceptance tests. Rollout between two
 releases, rollback and AWS deployment have not been attempted.
+
+### Recorded cluster acceptance (2026-11-13)
+
+[Cluster run 43429892322](https://github.com/arhumamjad07/secure-release-pipeline/actions/runs/43429892322)
+passed fixture publication and independent provenance verification, kind/controller
+setup, Helm lint/render, all four admission cases, actual Helm rollout, and API
+health/version checks. The run's `admission-evidence` artifact contains the raw
+admission responses and diagnostics. Fixture digests are in
+[evidence/admission.json](evidence/admission.json); release evidence is in
+[evidence/release.json](evidence/release.json). The ordinary PR tests and container
+smoke checks also passed. Final-commit CI should be checked on the open PR.
+
+The CI workflow emits bounded admission results as check annotations as well as
+saving raw artifacts, so basic evidence is available when the cloud proxy denies
+Actions artifact/log download hosts. The final policy matches only digest references
+inside the exact project repository. No admission exceptions or verification bypass
+flags are used.

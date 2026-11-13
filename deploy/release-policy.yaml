@@ -4,7 +4,7 @@ metadata:
   name: trusted-release
 spec:
   images:
-    - glob: "ghcr.io/arhumamjad07/secure-release-pipeline**"
+    - glob: "ghcr.io/arhumamjad07/secure-release-pipeline@sha256:*"
   authorities:
     - name: github-release
       signatureFormat: bundle

@@ -2,8 +2,9 @@
 
 A minimal FastAPI workload and separate pull request and trusted release workflows.
 The complete project plan is in [secure-release-pipeline.md](secure-release-pipeline.md).
-Milestone 1 works locally. Milestone 2 is implemented but still needs its first real
-GitHub Actions release. Kubernetes admission, rollback and AWS are future milestones.
+Milestones 1 and 2 are verified, including a real trusted release. The local
+Kubernetes admission milestone is implemented on this branch. Rollback and AWS
+remain future milestones.
 
 ## Local development
 
@@ -130,10 +131,73 @@ Pytest emitted one upstream Starlette/AnyIO deprecation warning. An initial smok
 attempt exposed a startup connection reset; the script now retries transport
 failures while still failing immediately on incorrect response bodies.
 
-Still required in GitHub: run the PR workflow on a real PR, configure/verify branch
-and environment protection, publish to GHCR, issue the OIDC-backed provenance,
-verify the actual digest/commit/workflow claims, and smoke-test the pulled release.
-These were **not run locally**. Git read access works; the cloud CLI's API token
-was rejected, and local execution cannot mint GitHub Actions workload identity.
-No publishing permission or protection settings have been assumed. No cluster,
-cloud infrastructure, admission tests, rollback or deployment has been attempted.
+## Verified release and admission milestone
+
+`main` was reported protected by GitHub before dispatch. [Trusted release run
+43429326175](https://github.com/arhumamjad07/secure-release-pipeline/actions/runs/43429326175)
+passed tests, image publication, provenance issuance, `gh attestation verify` with
+repository/workflow/ref/source/hosted-runner constraints, and the pulled digest's
+health/version/non-root smoke test. Source: `efeeea72b970b20166e4e65d1322cfa3c12462df`.
+
+Approved immutable image:
+
+```text
+ghcr.io/arhumamjad07/secure-release-pipeline@sha256:48f8e715474cc904933cd36eb3ac7ef16c91ddffb2f16a779e73f094ee9d4a78
+```
+
+The registry's digest and stored SLSA statement subject were also inspected.
+The cloud proxy denies the redirected Actions log host
+`productionresultssa1.blob.core.windows.net` (CONNECT HTTP 403); the GitHub
+job API supplies step results. Credentials were never printed or committed.
+
+### Reproduce Kubernetes admission
+
+Requires Docker with kind privileges, kind 0.31.0, kubectl and Helm 3. The setup
+creates a disposable cluster named `secure-release`; remove it with
+`kind delete cluster --name secure-release`. No cloud infrastructure is created.
+
+```sh
+scripts/setup-kind.sh
+UNSIGNED_IMAGE=ghcr.io/arhumamjad07/secure-release-pipeline@sha256:UNSIGNED_FIXTURE_DIGEST \
+UNAPPROVED_IMAGE=ghcr.io/arhumamjad07/secure-release-pipeline@sha256:WRONG_WORKFLOW_FIXTURE_DIGEST \
+  scripts/test-admission.sh
+```
+
+The controller is Helm chart 0.10.8 / Policy Controller 0.13.1, whose chart pins
+the controller image digest. Its [bundle authority API](https://github.com/sigstore/policy-controller/blob/v0.13.1/pkg/apis/policy/v1beta1/clusterimagepolicy_types.go)
+and [verifier](https://github.com/sigstore/policy-controller/blob/v0.13.1/pkg/webhook/validator.go)
+support GitHub's OCI Sigstore bundles (`signatureFormat: bundle`). This public
+repository's GitHub attestations use the public Sigstore trust root, fetched via
+TUF by the controller; private-repository GitHub trust roots are not configured.
+TLS, certificate transparency and transparency-log verification remain enabled.
+The policy requires the exact GitHub OIDC issuer and certificate subject for
+`release.yml@refs/heads/main`, plus the SLSA v1 predicate's repository, path and ref.
+It does not claim vulnerability assessment or code safety.
+
+The protected `secure-app` namespace is explicitly opted into enforcing admission.
+Webhook failure policy is Fail and unmatched images are denied. The Helm chart
+requires a full SHA-256 digest, runs as UID 10001 with restricted security settings,
+and has readiness/liveness probes. The release identity accepts future verified
+releases from the same workflow/ref; it is not a hardcoded digest allowlist.
+Only cluster administrators should change policy, webhook configuration or namespace
+labels. The application chart contains no policy resources or RBAC permissions;
+release publishing permissions remain separate from cluster administration.
+
+`Kubernetes admission` CI runs on feature-branch pushes, with a publishing fixture
+job separate from the read-only cluster job. It creates two distinct project-owned
+images: one with no attestation, and one with real provenance issued by
+`admission.yml` on this feature branch. It first verifies the latter with GitHub CLI,
+so rejecting it demonstrates a workflow trust decision. It never grants publishing
+permissions to fork PR code. The ordinary PR workflow retains read-only permissions.
+
+The cluster check proves the approved digest is admitted, the unsigned and
+wrong-workflow digests are rejected, an outside-policy image is rejected, and the
+approved Helm workload becomes ready and serves its source version. Negative
+checks require a policy rejection message; transport failures cannot pass them.
+Raw admission outputs, controller state, running Pod image and API responses are
+uploaded as `admission-evidence`. Treat the branch's push run as the cluster check;
+the ordinary PR workflow tests the merge revision.
+
+Local kind is blocked by rootless Docker's missing systemd `Delegate=yes`.
+GitHub Actions is used for the real cluster acceptance tests. Rollout between two
+releases, rollback and AWS deployment have not been attempted.

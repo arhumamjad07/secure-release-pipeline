@@ -1,6 +1,5 @@
 name: Kubernetes admission
 on:
-  pull_request:
   push:
     branches: [feat/local-kubernetes-admission]
 permissions: {}
@@ -90,12 +89,25 @@ jobs:
           helm template secure-api charts/secure-api >/tmp/rendered.yaml
           bash -n scripts/setup-kind.sh scripts/test-admission.sh
       - name: Create cluster and install enforcing policy
-        run: scripts/setup-kind.sh
+        run: |
+          set -o pipefail
+          if ! scripts/setup-kind.sh 2>&1 | tee /tmp/setup.log; then
+            tail -c 5000 /tmp/setup.log | while IFS= read -r line; do echo "::error::$line"; done
+            exit 1
+          fi
       - name: Admission and running workload tests
         env:
           UNSIGNED_IMAGE: ghcr.io/arhumamjad07/secure-release-pipeline@${{ needs.fixtures.outputs.unsigned }}
           UNAPPROVED_IMAGE: ghcr.io/arhumamjad07/secure-release-pipeline@${{ needs.fixtures.outputs.unapproved }}
-        run: scripts/test-admission.sh
+        run: |
+          set -o pipefail
+          if ! scripts/test-admission.sh 2>&1 | tee /tmp/admission.log; then
+            tail -c 6000 /tmp/admission.log | while IFS= read -r line; do echo "::error::$line"; done
+            exit 1
+          fi
+          for result in evidence/approved.txt evidence/unsigned.txt evidence/unapproved-workflow.txt evidence/outside-policy.txt evidence/health.json evidence/version.json; do
+            while IFS= read -r line || [ -n "$line" ]; do echo "::notice file=$result::$line"; done < "$result"
+          done
       - name: Diagnostics
         if: always()
         run: |

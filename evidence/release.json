@@ -1,0 +1,8 @@
+{
+  "run": "https://github.com/arhumamjad07/secure-release-pipeline/actions/runs/43429326175",
+  "source": "efeeea72b970b20166e4e65d1322cfa3c12462df",
+  "image": "ghcr.io/arhumamjad07/secure-release-pipeline@sha256:48f8e715474cc904933cd36eb3ac7ef16c91ddffb2f16a779e73f094ee9d4a78",
+  "main_protected_at_dispatch": true,
+  "provenance_verification": "passed in Trusted release",
+  "published_digest_smoke_test": "passed in Trusted release"
+}
